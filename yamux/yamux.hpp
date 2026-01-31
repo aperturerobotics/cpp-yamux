@@ -10,4 +10,4 @@
 #include "yamux/stream.hpp"
 #include "yamux/types.hpp"
 
-#endif  // YAMUX_YAMUX_HPP
+#endif // YAMUX_YAMUX_HPP

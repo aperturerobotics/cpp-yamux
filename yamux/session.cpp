@@ -5,11 +5,9 @@
 namespace yamux {
 
 Session::Session(std::unique_ptr<Connection> conn, bool is_client,
-                 AcceptHandler handler, const SessionConfig& config)
-    : conn_(std::move(conn)),
-      is_client_(is_client),
-      accept_handler_(std::move(handler)),
-      config_(config),
+                 AcceptHandler handler, const SessionConfig &config)
+    : conn_(std::move(conn)), is_client_(is_client),
+      accept_handler_(std::move(handler)), config_(config),
       next_stream_id_(is_client ? 1 : 2) {}
 
 Session::~Session() {
@@ -24,16 +22,16 @@ Session::~Session() {
 }
 
 std::shared_ptr<Session> Session::Client(std::unique_ptr<Connection> conn,
-                                         const SessionConfig& config) {
-  auto session =
-      std::shared_ptr<Session>(new Session(std::move(conn), true, nullptr, config));
+                                         const SessionConfig &config) {
+  auto session = std::shared_ptr<Session>(
+      new Session(std::move(conn), true, nullptr, config));
   session->Start();
   return session;
 }
 
 std::shared_ptr<Session> Session::Server(std::unique_ptr<Connection> conn,
                                          AcceptHandler handler,
-                                         const SessionConfig& config) {
+                                         const SessionConfig &config) {
   auto session = std::shared_ptr<Session>(
       new Session(std::move(conn), false, std::move(handler), config));
   session->Start();
@@ -41,7 +39,7 @@ std::shared_ptr<Session> Session::Server(std::unique_ptr<Connection> conn,
 }
 
 std::shared_ptr<Session> Session::Server(std::unique_ptr<Connection> conn,
-                                         const SessionConfig& config) {
+                                         const SessionConfig &config) {
   return Server(std::move(conn), nullptr, config);
 }
 
@@ -89,9 +87,8 @@ Result<std::shared_ptr<Stream>> Session::OpenStream() {
 Result<std::shared_ptr<Stream>> Session::Accept() {
   std::unique_lock<std::mutex> lock(accept_mtx_);
 
-  accept_cv_.wait(lock, [this]() {
-    return !accept_queue_.empty() || closed_.load();
-  });
+  accept_cv_.wait(
+      lock, [this]() { return !accept_queue_.empty() || closed_.load(); });
 
   if (closed_.load() && accept_queue_.empty()) {
     return {nullptr, Error::SessionShutdown};
@@ -105,7 +102,7 @@ Result<std::shared_ptr<Stream>> Session::Accept() {
 Error Session::Close() {
   bool expected = false;
   if (!closed_.compare_exchange_strong(expected, true)) {
-    return Error::OK;  // Already closed
+    return Error::OK; // Already closed
   }
 
   // Send GoAway if not already sent
@@ -130,7 +127,7 @@ Error Session::Close() {
 
 Error Session::GoAway(GoAwayCode code) {
   if (go_away_sent_.exchange(true)) {
-    return Error::OK;  // Already sent
+    return Error::OK; // Already sent
   }
 
   return SendFrame(Frame::GoAway(code));
@@ -158,9 +155,8 @@ Result<uint32_t> Session::Ping() {
   lock.lock();
 
   // Wait for response
-  ping_cv_.wait(lock, [this, id]() {
-    return !ping_pending_ || closed_.load();
-  });
+  ping_cv_.wait(lock,
+                [this, id]() { return !ping_pending_ || closed_.load(); });
 
   if (closed_.load()) {
     return {0, Error::SessionShutdown};
@@ -172,7 +168,7 @@ Result<uint32_t> Session::Ping() {
   return {static_cast<uint32_t>(rtt.count()), Error::OK};
 }
 
-Error Session::SendData(StreamID id, const uint8_t* data, size_t len,
+Error Session::SendData(StreamID id, const uint8_t *data, size_t len,
                         Flags flags) {
   if (closed_.load()) {
     return Error::SessionShutdown;
@@ -189,7 +185,7 @@ Error Session::SendWindowUpdate(StreamID id, uint32_t delta, Flags flags) {
   return SendFrame(Frame::WindowUpdate(id, flags, delta));
 }
 
-Error Session::SendFrame(const Frame& frame) {
+Error Session::SendFrame(const Frame &frame) {
   std::lock_guard<std::mutex> lock(write_mtx_);
 
   if (conn_->IsClosed()) {
@@ -208,7 +204,7 @@ void Session::ReadLoop() {
     auto result = conn_->Read(buf.data(), buf.size());
     if (result.error != Error::OK) {
       if (result.error == Error::Timeout) {
-        continue;  // Retry on timeout
+        continue; // Retry on timeout
       }
       if (result.error != Error::EOF_) {
         session_error_.store(result.error);
@@ -244,7 +240,7 @@ void Session::ReadLoop() {
       }
 
       if (consumed == 0 && !reader.HasFrame()) {
-        break;  // Need more data
+        break; // Need more data
       }
     }
   }
@@ -256,22 +252,22 @@ void Session::ReadLoop() {
   ping_cv_.notify_all();
 }
 
-Error Session::HandleFrame(const Frame& frame) {
+Error Session::HandleFrame(const Frame &frame) {
   switch (frame.header.type) {
-    case FrameType::Data:
-      return HandleDataFrame(frame);
-    case FrameType::WindowUpdate:
-      return HandleWindowUpdateFrame(frame);
-    case FrameType::Ping:
-      return HandlePingFrame(frame);
-    case FrameType::GoAway:
-      return HandleGoAwayFrame(frame);
-    default:
-      return Error::InvalidFrameType;
+  case FrameType::Data:
+    return HandleDataFrame(frame);
+  case FrameType::WindowUpdate:
+    return HandleWindowUpdateFrame(frame);
+  case FrameType::Ping:
+    return HandlePingFrame(frame);
+  case FrameType::GoAway:
+    return HandleGoAwayFrame(frame);
+  default:
+    return Error::InvalidFrameType;
   }
 }
 
-Error Session::HandleDataFrame(const Frame& frame) {
+Error Session::HandleDataFrame(const Frame &frame) {
   StreamID id = frame.header.stream_id;
   if (id == 0) {
     return Error::InvalidStreamID;
@@ -284,12 +280,11 @@ Error Session::HandleDataFrame(const Frame& frame) {
     if (HasFlag(frame.header.flags, Flags::SYN)) {
       SendWindowUpdate(id, 0, Flags::RST);
     }
-    return Error::OK;  // Not fatal
+    return Error::OK; // Not fatal
   }
 
-  Error err =
-      stream->HandleData(frame.payload.data(), frame.payload.size(),
-                         frame.header.flags);
+  Error err = stream->HandleData(frame.payload.data(), frame.payload.size(),
+                                 frame.header.flags);
 
   // Send ACK if needed (window delta=0, just acknowledging the stream)
   if (stream->NeedsAck()) {
@@ -300,7 +295,7 @@ Error Session::HandleDataFrame(const Frame& frame) {
   return err;
 }
 
-Error Session::HandleWindowUpdateFrame(const Frame& frame) {
+Error Session::HandleWindowUpdateFrame(const Frame &frame) {
   StreamID id = frame.header.stream_id;
 
   // Handle RST flag
@@ -328,7 +323,8 @@ Error Session::HandleWindowUpdateFrame(const Frame& frame) {
     return Error::OK;
   }
 
-  Error err = stream->HandleWindowUpdate(frame.header.length, frame.header.flags);
+  Error err =
+      stream->HandleWindowUpdate(frame.header.length, frame.header.flags);
 
   // Send ACK if needed (window delta=0, just acknowledging the stream)
   if (stream->NeedsAck()) {
@@ -339,7 +335,7 @@ Error Session::HandleWindowUpdateFrame(const Frame& frame) {
   return err;
 }
 
-Error Session::HandlePingFrame(const Frame& frame) {
+Error Session::HandlePingFrame(const Frame &frame) {
   if (HasFlag(frame.header.flags, Flags::ACK)) {
     // Ping response
     std::lock_guard<std::mutex> lock(ping_mtx_);
@@ -354,7 +350,7 @@ Error Session::HandlePingFrame(const Frame& frame) {
   return Error::OK;
 }
 
-Error Session::HandleGoAwayFrame(const Frame& frame) {
+Error Session::HandleGoAwayFrame(const Frame &frame) {
   go_away_received_.store(true);
   // Don't accept new streams after GoAway
   // Existing streams can continue until they close
@@ -431,9 +427,9 @@ void Session::RemoveStream(StreamID id) {
 
 void Session::CloseAllStreams() {
   std::shared_lock<std::shared_mutex> lock(streams_mtx_);
-  for (auto& [id, stream] : streams_) {
+  for (auto &[id, stream] : streams_) {
     stream->NotifySessionClosed();
   }
 }
 
-}  // namespace yamux
+} // namespace yamux

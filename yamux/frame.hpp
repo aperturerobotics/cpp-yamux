@@ -19,10 +19,10 @@ struct Header {
   uint32_t length;
 
   // Encode header to buffer (must be at least kHeaderSize bytes)
-  void Encode(uint8_t* buf) const;
+  void Encode(uint8_t *buf) const;
 
   // Decode header from buffer (must be at least kHeaderSize bytes)
-  static Result<Header> Decode(const uint8_t* buf);
+  static Result<Header> Decode(const uint8_t *buf);
 
   // Validate header
   Error Validate() const;
@@ -34,7 +34,7 @@ struct Frame {
   std::vector<uint8_t> payload;
 
   // Create a Data frame
-  static Frame Data(StreamID id, Flags flags, const uint8_t* data, size_t len);
+  static Frame Data(StreamID id, Flags flags, const uint8_t *data, size_t len);
 
   // Create a WindowUpdate frame
   static Frame WindowUpdate(StreamID id, Flags flags, uint32_t delta);
@@ -54,11 +54,11 @@ struct Frame {
 
 // Incremental frame reader for parsing frames from a byte stream
 class FrameReader {
- public:
+public:
   FrameReader() = default;
 
   // Feed data to the reader. Returns number of bytes consumed.
-  size_t Feed(const uint8_t* data, size_t len);
+  size_t Feed(const uint8_t *data, size_t len);
 
   // Check if a complete frame is available
   bool HasFrame() const { return state_ == State::Complete; }
@@ -72,7 +72,7 @@ class FrameReader {
   // Get any parsing error
   Error GetError() const { return error_; }
 
- private:
+private:
   enum class State { ReadingHeader, ReadingPayload, Complete, Error };
 
   State state_ = State::ReadingHeader;
@@ -83,6 +83,6 @@ class FrameReader {
   std::vector<uint8_t> payload_buf_;
 };
 
-}  // namespace yamux
+} // namespace yamux
 
-#endif  // YAMUX_FRAME_HPP
+#endif // YAMUX_FRAME_HPP

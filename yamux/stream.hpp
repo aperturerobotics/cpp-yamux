@@ -18,9 +18,9 @@ class Session;
 // A yamux stream with flow control and state machine.
 // Streams are created by the Session and should not be constructed directly.
 class Stream : public std::enable_shared_from_this<Stream> {
- public:
+public:
   // Create a new stream (called by Session)
-  Stream(Session* session, StreamID id, bool is_initiator,
+  Stream(Session *session, StreamID id, bool is_initiator,
          uint32_t initial_window = kInitialWindowSize);
 
   ~Stream();
@@ -34,12 +34,12 @@ class Stream : public std::enable_shared_from_this<Stream> {
   // Read data from the stream.
   // Blocks until data is available, the stream is closed, or an error occurs.
   // Returns the number of bytes read, or 0 with an error.
-  Result<size_t> Read(uint8_t* buf, size_t max_len);
+  Result<size_t> Read(uint8_t *buf, size_t max_len);
 
   // Write data to the stream.
   // Blocks if the flow control window is exhausted.
   // Returns Error::OK on success.
-  Error Write(const uint8_t* data, size_t len);
+  Error Write(const uint8_t *data, size_t len);
 
   // Half-close the stream (send FIN).
   // We won't send any more data, but can still receive.
@@ -58,7 +58,7 @@ class Stream : public std::enable_shared_from_this<Stream> {
   // --- Internal methods called by Session ---
 
   // Handle incoming data from the session
-  Error HandleData(const uint8_t* data, size_t len, Flags flags);
+  Error HandleData(const uint8_t *data, size_t len, Flags flags);
 
   // Handle incoming window update from the session
   Error HandleWindowUpdate(uint32_t delta, Flags flags);
@@ -84,11 +84,11 @@ class Stream : public std::enable_shared_from_this<Stream> {
   // Set state directly (used during stream creation)
   void SetState(StreamState state);
 
- private:
+private:
   // Send a window update to peer if needed
   Error MaybeSendWindowUpdate();
 
-  Session* session_;
+  Session *session_;
   StreamID id_;
   bool is_initiator_;
 
@@ -107,19 +107,19 @@ class Stream : public std::enable_shared_from_this<Stream> {
   // Write synchronization (flow control)
   mutable std::mutex send_mtx_;
   std::condition_variable send_cv_;
-  uint32_t send_window_;  // How much we can send to peer
+  uint32_t send_window_; // How much we can send to peer
   std::atomic<bool> local_fin_sent_{false};
 
   // Receive window tracking
   mutable std::mutex recv_mtx_;
   uint32_t initial_recv_window_;
-  std::atomic<uint32_t> recv_window_;  // Our receive window
-  uint32_t bytes_consumed_ = 0;        // Bytes consumed since last window update
+  std::atomic<uint32_t> recv_window_; // Our receive window
+  uint32_t bytes_consumed_ = 0;       // Bytes consumed since last window update
 
   // ACK tracking for incoming streams
   std::atomic<bool> needs_ack_{false};
 };
 
-}  // namespace yamux
+} // namespace yamux
 
-#endif  // YAMUX_STREAM_HPP
+#endif // YAMUX_STREAM_HPP

@@ -32,21 +32,21 @@ struct SessionConfig {
 
 // A yamux session that manages streams over a connection.
 class Session : public std::enable_shared_from_this<Session> {
- public:
+public:
   ~Session();
 
   // Create a client session
   static std::shared_ptr<Session> Client(std::unique_ptr<Connection> conn,
-                                         const SessionConfig& config = {});
+                                         const SessionConfig &config = {});
 
   // Create a server session with accept handler
   static std::shared_ptr<Session> Server(std::unique_ptr<Connection> conn,
                                          AcceptHandler handler,
-                                         const SessionConfig& config = {});
+                                         const SessionConfig &config = {});
 
   // Create a server session without handler (use Accept() instead)
   static std::shared_ptr<Session> Server(std::unique_ptr<Connection> conn,
-                                         const SessionConfig& config = {});
+                                         const SessionConfig &config = {});
 
   // Open a new stream (client-side: odd IDs, server-side: even IDs)
   Result<std::shared_ptr<Stream>> OpenStream();
@@ -75,14 +75,14 @@ class Session : public std::enable_shared_from_this<Session> {
   // --- Internal methods called by Stream ---
 
   // Send a data frame
-  Error SendData(StreamID id, const uint8_t* data, size_t len, Flags flags);
+  Error SendData(StreamID id, const uint8_t *data, size_t len, Flags flags);
 
   // Send a window update frame
   Error SendWindowUpdate(StreamID id, uint32_t delta, Flags flags);
 
- private:
+private:
   Session(std::unique_ptr<Connection> conn, bool is_client,
-          AcceptHandler handler, const SessionConfig& config);
+          AcceptHandler handler, const SessionConfig &config);
 
   // Start the read loop (called after construction)
   void Start();
@@ -91,18 +91,18 @@ class Session : public std::enable_shared_from_this<Session> {
   void ReadLoop();
 
   // Handle incoming frames
-  Error HandleFrame(const Frame& frame);
-  Error HandleDataFrame(const Frame& frame);
-  Error HandleWindowUpdateFrame(const Frame& frame);
-  Error HandlePingFrame(const Frame& frame);
-  Error HandleGoAwayFrame(const Frame& frame);
+  Error HandleFrame(const Frame &frame);
+  Error HandleDataFrame(const Frame &frame);
+  Error HandleWindowUpdateFrame(const Frame &frame);
+  Error HandlePingFrame(const Frame &frame);
+  Error HandleGoAwayFrame(const Frame &frame);
 
   // Get or create a stream for incoming frames
   std::shared_ptr<Stream> GetStream(StreamID id);
   std::shared_ptr<Stream> GetOrCreateIncomingStream(StreamID id, Flags flags);
 
   // Send a frame (thread-safe)
-  Error SendFrame(const Frame& frame);
+  Error SendFrame(const Frame &frame);
 
   // Remove a stream from the session
   void RemoveStream(StreamID id);
@@ -143,6 +143,6 @@ class Session : public std::enable_shared_from_this<Session> {
   std::atomic<Error> session_error_{Error::OK};
 };
 
-}  // namespace yamux
+} // namespace yamux
 
-#endif  // YAMUX_SESSION_HPP
+#endif // YAMUX_SESSION_HPP

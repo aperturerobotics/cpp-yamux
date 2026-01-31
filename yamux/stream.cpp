@@ -4,13 +4,10 @@
 
 namespace yamux {
 
-Stream::Stream(Session* session, StreamID id, bool is_initiator,
+Stream::Stream(Session *session, StreamID id, bool is_initiator,
                uint32_t initial_window)
-    : session_(session),
-      id_(id),
-      is_initiator_(is_initiator),
-      send_window_(initial_window),
-      initial_recv_window_(initial_window),
+    : session_(session), id_(id), is_initiator_(is_initiator),
+      send_window_(initial_window), initial_recv_window_(initial_window),
       recv_window_(initial_window) {}
 
 Stream::~Stream() = default;
@@ -27,7 +24,7 @@ void Stream::SetState(StreamState state) {
   state_ = state;
 }
 
-Result<size_t> Stream::Read(uint8_t* buf, size_t max_len) {
+Result<size_t> Stream::Read(uint8_t *buf, size_t max_len) {
   std::unique_lock<std::mutex> lock(read_mtx_);
 
   // Wait for data, close, or reset
@@ -48,7 +45,7 @@ Result<size_t> Stream::Read(uint8_t* buf, size_t max_len) {
 
   // Return data if available
   if (!read_queue_.empty()) {
-    auto& front = read_queue_.front();
+    auto &front = read_queue_.front();
     size_t to_copy = std::min(max_len, front.size());
     std::memcpy(buf, front.data(), to_copy);
 
@@ -77,7 +74,7 @@ Result<size_t> Stream::Read(uint8_t* buf, size_t max_len) {
   return {0, Error::EOF_};
 }
 
-Error Stream::Write(const uint8_t* data, size_t len) {
+Error Stream::Write(const uint8_t *data, size_t len) {
   if (local_fin_sent_.load()) {
     return Error::StreamClosed;
   }
@@ -130,7 +127,7 @@ Error Stream::Write(const uint8_t* data, size_t len) {
 Error Stream::Close() {
   bool expected = false;
   if (!local_fin_sent_.compare_exchange_strong(expected, true)) {
-    return Error::OK;  // Already closed
+    return Error::OK; // Already closed
   }
 
   // Update state
@@ -158,7 +155,7 @@ Error Stream::Close() {
 Error Stream::Reset() {
   bool expected = false;
   if (!reset_.compare_exchange_strong(expected, true)) {
-    return Error::OK;  // Already reset
+    return Error::OK; // Already reset
   }
 
   // Update state
@@ -177,7 +174,7 @@ Error Stream::Reset() {
   return err;
 }
 
-Error Stream::HandleData(const uint8_t* data, size_t len, Flags flags) {
+Error Stream::HandleData(const uint8_t *data, size_t len, Flags flags) {
   // Handle SYN flag (stream opening)
   if (HasFlag(flags, Flags::SYN)) {
     std::lock_guard<std::mutex> lock(state_mtx_);
@@ -312,4 +309,4 @@ Error Stream::MaybeSendWindowUpdate() {
   return Error::OK;
 }
 
-}  // namespace yamux
+} // namespace yamux

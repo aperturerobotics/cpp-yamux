@@ -7,31 +7,31 @@ namespace yamux {
 namespace {
 
 // Big-endian encoding helpers
-inline void PutU16BE(uint8_t* buf, uint16_t val) {
+inline void PutU16BE(uint8_t *buf, uint16_t val) {
   buf[0] = static_cast<uint8_t>(val >> 8);
   buf[1] = static_cast<uint8_t>(val);
 }
 
-inline void PutU32BE(uint8_t* buf, uint32_t val) {
+inline void PutU32BE(uint8_t *buf, uint32_t val) {
   buf[0] = static_cast<uint8_t>(val >> 24);
   buf[1] = static_cast<uint8_t>(val >> 16);
   buf[2] = static_cast<uint8_t>(val >> 8);
   buf[3] = static_cast<uint8_t>(val);
 }
 
-inline uint16_t GetU16BE(const uint8_t* buf) {
+inline uint16_t GetU16BE(const uint8_t *buf) {
   return (static_cast<uint16_t>(buf[0]) << 8) | static_cast<uint16_t>(buf[1]);
 }
 
-inline uint32_t GetU32BE(const uint8_t* buf) {
+inline uint32_t GetU32BE(const uint8_t *buf) {
   return (static_cast<uint32_t>(buf[0]) << 24) |
          (static_cast<uint32_t>(buf[1]) << 16) |
          (static_cast<uint32_t>(buf[2]) << 8) | static_cast<uint32_t>(buf[3]);
 }
 
-}  // namespace
+} // namespace
 
-void Header::Encode(uint8_t* buf) const {
+void Header::Encode(uint8_t *buf) const {
   buf[0] = version;
   buf[1] = static_cast<uint8_t>(type);
   PutU16BE(buf + 2, static_cast<uint16_t>(flags));
@@ -39,7 +39,7 @@ void Header::Encode(uint8_t* buf) const {
   PutU32BE(buf + 8, length);
 }
 
-Result<Header> Header::Decode(const uint8_t* buf) {
+Result<Header> Header::Decode(const uint8_t *buf) {
   Header h;
   h.version = buf[0];
   h.type = static_cast<FrameType>(buf[1]);
@@ -64,7 +64,7 @@ Error Header::Validate() const {
   return Error::OK;
 }
 
-Frame Frame::Data(StreamID id, Flags flags, const uint8_t* data, size_t len) {
+Frame Frame::Data(StreamID id, Flags flags, const uint8_t *data, size_t len) {
   Frame f;
   f.header.version = kVersion;
   f.header.type = FrameType::Data;
@@ -116,7 +116,7 @@ std::vector<uint8_t> Frame::Encode() const {
   return buf;
 }
 
-size_t FrameReader::Feed(const uint8_t* data, size_t len) {
+size_t FrameReader::Feed(const uint8_t *data, size_t len) {
   if (state_ == State::Complete || state_ == State::Error) {
     return 0;
   }
@@ -186,4 +186,4 @@ void FrameReader::Reset() {
   payload_buf_.clear();
 }
 
-}  // namespace yamux
+} // namespace yamux
