@@ -2,6 +2,7 @@
 
 #include "yamux/yamux.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <memory>
@@ -94,7 +95,7 @@ class InMemoryConnection : public yamux::Connection {
  private:
   std::shared_ptr<InMemoryEndpoint> read_ep_;
   std::shared_ptr<InMemoryEndpoint> write_ep_;
-  bool closed_ = false;
+  std::atomic<bool> closed_{false};
 };
 
 // Create a pair of connected in-memory connections
