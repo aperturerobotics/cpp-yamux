@@ -23,9 +23,11 @@ Session::~Session() {
 
 std::shared_ptr<Session> Session::Client(std::unique_ptr<Connection> conn,
                                          const SessionConfig &config) {
+  fprintf(stderr, "[yamux] Session::Client: creating client session\n");
   auto session = std::shared_ptr<Session>(
       new Session(std::move(conn), true, nullptr, config));
   session->Start();
+  fprintf(stderr, "[yamux] Session::Client: session started\n");
   return session;
 }
 
@@ -51,16 +53,21 @@ void Session::Start() {
 }
 
 Result<std::shared_ptr<Stream>> Session::OpenStream() {
+  fprintf(stderr, "[yamux] OpenStream: called\n");
+
   if (closed_.load()) {
+    fprintf(stderr, "[yamux] OpenStream: session shutdown\n");
     return {nullptr, Error::SessionShutdown};
   }
 
   if (go_away_received_.load()) {
+    fprintf(stderr, "[yamux] OpenStream: go away received\n");
     return {nullptr, Error::GoAwayReceived};
   }
 
   // Allocate stream ID
   StreamID id = next_stream_id_.fetch_add(2);
+  fprintf(stderr, "[yamux] OpenStream: allocated stream id=%u\n", id);
 
   // Create stream
   auto stream =
@@ -74,13 +81,17 @@ Result<std::shared_ptr<Stream>> Session::OpenStream() {
   }
 
   // Send SYN via window update (can also use data frame)
+  fprintf(stderr, "[yamux] OpenStream: sending SYN for stream %u\n", id);
   Error err = SendWindowUpdate(id, config_.initial_window_size, Flags::SYN);
   if (err != Error::OK) {
+    fprintf(stderr, "[yamux] OpenStream: SYN send failed: %s\n",
+            ErrorString(err));
     std::unique_lock<std::shared_mutex> lock(streams_mtx_);
     streams_.erase(id);
     return {nullptr, err};
   }
 
+  fprintf(stderr, "[yamux] OpenStream: stream %u opened successfully\n", id);
   return {stream, Error::OK};
 }
 
@@ -189,20 +200,54 @@ Error Session::SendFrame(const Frame &frame) {
   std::lock_guard<std::mutex> lock(write_mtx_);
 
   if (conn_->IsClosed()) {
+    fprintf(stderr, "[yamux] SendFrame: connection closed\n");
     return Error::ConnectionClosed;
   }
 
   auto encoded = frame.Encode();
-  return conn_->Write(encoded.data(), encoded.size());
+
+  // Debug logging
+  const char *type_str = "Unknown";
+  switch (frame.header.type) {
+  case FrameType::Data:
+    type_str = "Data";
+    break;
+  case FrameType::WindowUpdate:
+    type_str = "WindowUpdate";
+    break;
+  case FrameType::Ping:
+    type_str = "Ping";
+    break;
+  case FrameType::GoAway:
+    type_str = "GoAway";
+    break;
+  }
+  fprintf(stderr,
+          "[yamux] SendFrame: type=%s stream=%u flags=0x%x length=%u "
+          "encoded_size=%zu\n",
+          type_str, frame.header.stream_id,
+          static_cast<unsigned>(frame.header.flags), frame.header.length,
+          encoded.size());
+
+  auto err = conn_->Write(encoded.data(), encoded.size());
+  if (err != Error::OK) {
+    fprintf(stderr, "[yamux] SendFrame: write error=%d (%s)\n",
+            static_cast<int>(err), ErrorString(err));
+  }
+  return err;
 }
 
 void Session::ReadLoop() {
+  fprintf(stderr, "[yamux] ReadLoop: started, is_client=%d\n", is_client_);
+
   std::vector<uint8_t> buf(4096);
   FrameReader reader;
 
   while (!closed_.load()) {
     auto result = conn_->Read(buf.data(), buf.size());
     if (result.error != Error::OK) {
+      fprintf(stderr, "[yamux] ReadLoop: read error=%d (%s)\n",
+              static_cast<int>(result.error), ErrorString(result.error));
       if (result.error == Error::Timeout) {
         continue; // Retry on timeout
       }
@@ -214,8 +259,11 @@ void Session::ReadLoop() {
 
     if (result.value == 0) {
       // EOF
+      fprintf(stderr, "[yamux] ReadLoop: EOF (0 bytes read)\n");
       break;
     }
+
+    fprintf(stderr, "[yamux] ReadLoop: read %zu bytes\n", result.value);
 
     // Feed data to frame reader
     size_t offset = 0;
@@ -253,6 +301,27 @@ void Session::ReadLoop() {
 }
 
 Error Session::HandleFrame(const Frame &frame) {
+  // Debug logging
+  const char *type_str = "Unknown";
+  switch (frame.header.type) {
+  case FrameType::Data:
+    type_str = "Data";
+    break;
+  case FrameType::WindowUpdate:
+    type_str = "WindowUpdate";
+    break;
+  case FrameType::Ping:
+    type_str = "Ping";
+    break;
+  case FrameType::GoAway:
+    type_str = "GoAway";
+    break;
+  }
+  fprintf(stderr,
+          "[yamux] HandleFrame: type=%s stream=%u flags=0x%x length=%u\n",
+          type_str, frame.header.stream_id,
+          static_cast<unsigned>(frame.header.flags), frame.header.length);
+
   switch (frame.header.type) {
   case FrameType::Data:
     return HandleDataFrame(frame);
