@@ -131,12 +131,14 @@ Error Stream::Close() {
   }
 
   // Update state
+  bool fully_closed = false;
   {
     std::lock_guard<std::mutex> lock(state_mtx_);
     if (state_ == StreamState::Established) {
       state_ = StreamState::LocalClose;
     } else if (state_ == StreamState::RemoteClose) {
       state_ = StreamState::Closed;
+      fully_closed = true;
     }
   }
 
@@ -148,6 +150,10 @@ Error Stream::Close() {
 
   // Wake up any blocked writers
   send_cv_.notify_all();
+
+  if (fully_closed) {
+    session_->RemoveStream(id_);
+  }
 
   return Error::OK;
 }
@@ -170,6 +176,8 @@ Error Stream::Reset() {
   // Wake up blocked readers/writers
   read_cv_.notify_all();
   send_cv_.notify_all();
+
+  session_->RemoveStream(id_);
 
   return err;
 }
@@ -208,6 +216,7 @@ Error Stream::HandleData(const uint8_t *data, size_t len, Flags flags) {
   if (HasFlag(flags, Flags::FIN)) {
     remote_fin_received_.store(true);
 
+    bool fully_closed = false;
     {
       std::lock_guard<std::mutex> lock(state_mtx_);
       if (state_ == StreamState::Established ||
@@ -215,10 +224,15 @@ Error Stream::HandleData(const uint8_t *data, size_t len, Flags flags) {
         state_ = StreamState::RemoteClose;
       } else if (state_ == StreamState::LocalClose) {
         state_ = StreamState::Closed;
+        fully_closed = true;
       }
     }
 
     read_cv_.notify_all();
+
+    if (fully_closed) {
+      session_->RemoveStream(id_);
+    }
   }
 
   return Error::OK;
@@ -245,8 +259,11 @@ Error Stream::HandleWindowUpdate(uint32_t delta, Flags flags) {
     return Error::OK;
   }
 
-  // Update send window
-  if (delta > 0) {
+  // Update send window.
+  // Skip delta for SYN frames: the stream constructor already sets
+  // initial_window_size as the send_window. Adding the SYN delta would
+  // double-count, causing WindowExceeded on the peer.
+  if (delta > 0 && !HasFlag(flags, Flags::SYN)) {
     std::lock_guard<std::mutex> lock(send_mtx_);
     send_window_ += delta;
     send_cv_.notify_all();
@@ -256,6 +273,7 @@ Error Stream::HandleWindowUpdate(uint32_t delta, Flags flags) {
   if (HasFlag(flags, Flags::FIN)) {
     remote_fin_received_.store(true);
 
+    bool fully_closed = false;
     {
       std::lock_guard<std::mutex> lock(state_mtx_);
       if (state_ == StreamState::Established ||
@@ -263,10 +281,15 @@ Error Stream::HandleWindowUpdate(uint32_t delta, Flags flags) {
         state_ = StreamState::RemoteClose;
       } else if (state_ == StreamState::LocalClose) {
         state_ = StreamState::Closed;
+        fully_closed = true;
       }
     }
 
     read_cv_.notify_all();
+
+    if (fully_closed) {
+      session_->RemoveStream(id_);
+    }
   }
 
   return Error::OK;
@@ -282,6 +305,7 @@ void Stream::HandleReset() {
 
   read_cv_.notify_all();
   send_cv_.notify_all();
+  session_->RemoveStream(id_);
 }
 
 void Stream::NotifyEstablished() {

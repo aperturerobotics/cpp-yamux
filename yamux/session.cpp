@@ -73,8 +73,11 @@ Result<std::shared_ptr<Stream>> Session::OpenStream() {
     streams_[id] = stream;
   }
 
-  // Send SYN via window update (can also use data frame)
-  Error err = SendWindowUpdate(id, config_.initial_window_size, Flags::SYN);
+  // Send SYN via window update with delta=0.
+  // The stream constructor already sets initial_window_size as the send_window
+  // on both sides, so sending a non-zero delta would cause the receiver to
+  // double-count (constructor + delta = 2x window).
+  Error err = SendWindowUpdate(id, 0, Flags::SYN);
   if (err != Error::OK) {
     std::unique_lock<std::shared_mutex> lock(streams_mtx_);
     streams_.erase(id);

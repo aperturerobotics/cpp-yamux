@@ -143,6 +143,11 @@ size_t FrameReader::Feed(const uint8_t *data, size_t len) {
         header_ = result.value;
 
         if (header_.type == FrameType::Data && header_.length > 0) {
+          if (header_.length > kMaxFrameSize) {
+            error_ = Error::FrameTooLarge;
+            state_ = State::Error;
+            return consumed;
+          }
           payload_buf_.reserve(header_.length);
           state_ = State::ReadingPayload;
         } else {

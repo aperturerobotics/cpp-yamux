@@ -80,6 +80,9 @@ public:
   // Send a window update frame
   Error SendWindowUpdate(StreamID id, uint32_t delta, Flags flags);
 
+  // Remove a stream from the session map.
+  void RemoveStream(StreamID id);
+
 private:
   Session(std::unique_ptr<Connection> conn, bool is_client,
           AcceptHandler handler, const SessionConfig &config);
@@ -103,9 +106,6 @@ private:
 
   // Send a frame (thread-safe)
   Error SendFrame(const Frame &frame);
-
-  // Remove a stream from the session
-  void RemoveStream(StreamID id);
 
   // Close all streams
   void CloseAllStreams();

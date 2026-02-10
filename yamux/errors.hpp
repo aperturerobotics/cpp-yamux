@@ -26,6 +26,7 @@ enum class Error {
   InvalidState,
   WriteError,
   ReadError,
+  FrameTooLarge,
 };
 
 // Convert error to human-readable string
@@ -69,6 +70,8 @@ inline const char *ErrorString(Error err) {
     return "write error";
   case Error::ReadError:
     return "read error";
+  case Error::FrameTooLarge:
+    return "frame payload exceeds maximum size";
   default:
     return "unknown error";
   }
