@@ -5,332 +5,356 @@
 namespace yamux {
 
 Stream::Stream(Session *session, StreamID id, bool is_initiator,
-               uint32_t initial_window)
-    : session_(session), id_(id), is_initiator_(is_initiator),
-      send_window_(initial_window), initial_recv_window_(initial_window),
-      recv_window_(initial_window) {}
+	       uint32_t initial_window)
+	: session_(session),
+	  id_(id),
+	  is_initiator_(is_initiator),
+	  send_window_(initial_window),
+	  initial_recv_window_(initial_window),
+	  recv_window_(initial_window)
+{
+}
 
 Stream::~Stream() = default;
 
-StreamState Stream::State() const {
-  std::lock_guard<std::mutex> lock(state_mtx_);
-  return state_;
+StreamState Stream::State() const
+{
+	std::lock_guard<std::mutex> lock(state_mtx_);
+	return state_;
 }
 
-StreamState Stream::GetState() const { return State(); }
-
-void Stream::SetState(StreamState state) {
-  std::lock_guard<std::mutex> lock(state_mtx_);
-  state_ = state;
+StreamState Stream::GetState() const
+{
+	return State();
 }
 
-Result<size_t> Stream::Read(uint8_t *buf, size_t max_len) {
-  std::unique_lock<std::mutex> lock(read_mtx_);
-
-  // Wait for data, close, or reset
-  read_cv_.wait(lock, [this]() {
-    return !read_queue_.empty() || remote_fin_received_.load() ||
-           reset_.load() || session_closed_.load();
-  });
-
-  // Check for reset first
-  if (reset_.load()) {
-    return {0, Error::StreamReset};
-  }
-
-  // Check for session closed
-  if (session_closed_.load() && read_queue_.empty()) {
-    return {0, Error::SessionShutdown};
-  }
-
-  // Return data if available
-  if (!read_queue_.empty()) {
-    auto &front = read_queue_.front();
-    size_t to_copy = std::min(max_len, front.size());
-    std::memcpy(buf, front.data(), to_copy);
-
-    if (to_copy == front.size()) {
-      read_queue_.pop_front();
-    } else {
-      // Partial read - remove consumed bytes
-      front.erase(front.begin(), front.begin() + to_copy);
-    }
-
-    // Track consumed bytes for window updates
-    bytes_consumed_ += to_copy;
-
-    // Update receive window and maybe send update
-    lock.unlock();
-    MaybeSendWindowUpdate();
-
-    return {to_copy, Error::OK};
-  }
-
-  // No data and remote closed - EOF
-  if (remote_fin_received_.load()) {
-    return {0, Error::EOF_};
-  }
-
-  return {0, Error::EOF_};
+void Stream::SetState(StreamState state)
+{
+	std::lock_guard<std::mutex> lock(state_mtx_);
+	state_ = state;
 }
 
-Error Stream::Write(const uint8_t *data, size_t len) {
-  if (local_fin_sent_.load()) {
-    return Error::StreamClosed;
-  }
+Result<size_t> Stream::Read(uint8_t *buf, size_t max_len)
+{
+	std::unique_lock<std::mutex> lock(read_mtx_);
 
-  if (reset_.load()) {
-    return Error::StreamReset;
-  }
+	// Wait for data, close, or reset
+	read_cv_.wait(lock, [this]() {
+		return !read_queue_.empty() || remote_fin_received_.load() ||
+		       reset_.load() || session_closed_.load();
+	});
 
-  if (session_closed_.load()) {
-    return Error::SessionShutdown;
-  }
+	// Check for reset first
+	if (reset_.load()) {
+		return {0, Error::StreamReset};
+	}
 
-  size_t offset = 0;
-  while (offset < len) {
-    // Wait for send window
-    std::unique_lock<std::mutex> lock(send_mtx_);
-    send_cv_.wait(lock, [this]() {
-      return send_window_ > 0 || reset_.load() || session_closed_.load() ||
-             local_fin_sent_.load();
-    });
+	// Check for session closed
+	if (session_closed_.load() && read_queue_.empty()) {
+		return {0, Error::SessionShutdown};
+	}
 
-    if (reset_.load()) {
-      return Error::StreamReset;
-    }
-    if (session_closed_.load()) {
-      return Error::SessionShutdown;
-    }
-    if (local_fin_sent_.load()) {
-      return Error::StreamClosed;
-    }
+	// Return data if available
+	if (!read_queue_.empty()) {
+		auto &front = read_queue_.front();
+		size_t to_copy = std::min(max_len, front.size());
+		std::memcpy(buf, front.data(), to_copy);
 
-    // Calculate how much we can send
-    size_t remaining = len - offset;
-    size_t to_send = std::min(remaining, static_cast<size_t>(send_window_));
-    send_window_ -= static_cast<uint32_t>(to_send);
-    lock.unlock();
+		if (to_copy == front.size()) {
+			read_queue_.pop_front();
+		} else {
+			// Partial read - remove consumed bytes
+			front.erase(front.begin(), front.begin() + to_copy);
+		}
 
-    // Send the data
-    Error err = session_->SendData(id_, data + offset, to_send, Flags::None);
-    if (err != Error::OK) {
-      return err;
-    }
+		// Track consumed bytes for window updates
+		bytes_consumed_ += to_copy;
 
-    offset += to_send;
-  }
+		// Update receive window and maybe send update
+		lock.unlock();
+		MaybeSendWindowUpdate();
 
-  return Error::OK;
+		return {to_copy, Error::OK};
+	}
+
+	// No data and remote closed - EOF
+	if (remote_fin_received_.load()) {
+		return {0, Error::EOF_};
+	}
+
+	return {0, Error::EOF_};
 }
 
-Error Stream::Close() {
-  bool expected = false;
-  if (!local_fin_sent_.compare_exchange_strong(expected, true)) {
-    return Error::OK; // Already closed
-  }
+Error Stream::Write(const uint8_t *data, size_t len)
+{
+	if (local_fin_sent_.load()) {
+		return Error::StreamClosed;
+	}
 
-  // Update state
-  bool fully_closed = false;
-  {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    if (state_ == StreamState::Established) {
-      state_ = StreamState::LocalClose;
-    } else if (state_ == StreamState::RemoteClose) {
-      state_ = StreamState::Closed;
-      fully_closed = true;
-    }
-  }
+	if (reset_.load()) {
+		return Error::StreamReset;
+	}
 
-  // Send FIN
-  Error err = session_->SendData(id_, nullptr, 0, Flags::FIN);
-  if (err != Error::OK) {
-    return err;
-  }
+	if (session_closed_.load()) {
+		return Error::SessionShutdown;
+	}
 
-  // Wake up any blocked writers
-  send_cv_.notify_all();
+	size_t offset = 0;
+	while (offset < len) {
+		// Wait for send window
+		std::unique_lock<std::mutex> lock(send_mtx_);
+		send_cv_.wait(lock, [this]() {
+			return send_window_ > 0 || reset_.load() ||
+			       session_closed_.load() || local_fin_sent_.load();
+		});
 
-  if (fully_closed) {
-    session_->RemoveStream(id_);
-  }
+		if (reset_.load()) {
+			return Error::StreamReset;
+		}
+		if (session_closed_.load()) {
+			return Error::SessionShutdown;
+		}
+		if (local_fin_sent_.load()) {
+			return Error::StreamClosed;
+		}
 
-  return Error::OK;
+		// Calculate how much we can send
+		size_t remaining = len - offset;
+		size_t to_send =
+			std::min(remaining, static_cast<size_t>(send_window_));
+		send_window_ -= static_cast<uint32_t>(to_send);
+		lock.unlock();
+
+		// Send the data
+		Error err = session_->SendData(id_, data + offset, to_send,
+					       Flags::None);
+		if (err != Error::OK) {
+			return err;
+		}
+
+		offset += to_send;
+	}
+
+	return Error::OK;
 }
 
-Error Stream::Reset() {
-  bool expected = false;
-  if (!reset_.compare_exchange_strong(expected, true)) {
-    return Error::OK; // Already reset
-  }
+Error Stream::Close()
+{
+	bool expected = false;
+	if (!local_fin_sent_.compare_exchange_strong(expected, true)) {
+		return Error::OK; // Already closed
+	}
 
-  // Update state
-  {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    state_ = StreamState::Reset;
-  }
+	// Update state
+	bool fully_closed = false;
+	{
+		std::lock_guard<std::mutex> lock(state_mtx_);
+		if (state_ == StreamState::Established) {
+			state_ = StreamState::LocalClose;
+		} else if (state_ == StreamState::RemoteClose) {
+			state_ = StreamState::Closed;
+			fully_closed = true;
+		}
+	}
 
-  // Send RST
-  Error err = session_->SendWindowUpdate(id_, 0, Flags::RST);
+	// Send FIN
+	Error err = session_->SendData(id_, nullptr, 0, Flags::FIN);
+	if (err != Error::OK) {
+		return err;
+	}
 
-  // Wake up blocked readers/writers
-  read_cv_.notify_all();
-  send_cv_.notify_all();
+	// Wake up any blocked writers
+	send_cv_.notify_all();
 
-  session_->RemoveStream(id_);
+	if (fully_closed) {
+		session_->RemoveStream(id_);
+	}
 
-  return err;
+	return Error::OK;
 }
 
-Error Stream::HandleData(const uint8_t *data, size_t len, Flags flags) {
-  // Handle SYN flag (stream opening)
-  if (HasFlag(flags, Flags::SYN)) {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    if (state_ == StreamState::Init) {
-      state_ = StreamState::SYNReceived;
-      needs_ack_.store(true);
-    }
-  }
+Error Stream::Reset()
+{
+	bool expected = false;
+	if (!reset_.compare_exchange_strong(expected, true)) {
+		return Error::OK; // Already reset
+	}
 
-  // Handle ACK flag
-  if (HasFlag(flags, Flags::ACK)) {
-    NotifyEstablished();
-  }
+	// Update state
+	{
+		std::lock_guard<std::mutex> lock(state_mtx_);
+		state_ = StreamState::Reset;
+	}
 
-  // Handle data payload
-  if (len > 0) {
-    // Check window
-    uint32_t current_window = recv_window_.load();
-    if (len > current_window) {
-      return Error::WindowExceeded;
-    }
-    recv_window_.fetch_sub(static_cast<uint32_t>(len));
+	// Send RST
+	Error err = session_->SendWindowUpdate(id_, 0, Flags::RST);
 
-    // Queue data
-    std::lock_guard<std::mutex> lock(read_mtx_);
-    read_queue_.emplace_back(data, data + len);
-    read_cv_.notify_all();
-  }
+	// Wake up blocked readers/writers
+	read_cv_.notify_all();
+	send_cv_.notify_all();
 
-  // Handle FIN flag
-  if (HasFlag(flags, Flags::FIN)) {
-    remote_fin_received_.store(true);
+	session_->RemoveStream(id_);
 
-    bool fully_closed = false;
-    {
-      std::lock_guard<std::mutex> lock(state_mtx_);
-      if (state_ == StreamState::Established ||
-          state_ == StreamState::SYNReceived) {
-        state_ = StreamState::RemoteClose;
-      } else if (state_ == StreamState::LocalClose) {
-        state_ = StreamState::Closed;
-        fully_closed = true;
-      }
-    }
-
-    read_cv_.notify_all();
-
-    if (fully_closed) {
-      session_->RemoveStream(id_);
-    }
-  }
-
-  return Error::OK;
+	return err;
 }
 
-Error Stream::HandleWindowUpdate(uint32_t delta, Flags flags) {
-  // Handle SYN flag (stream opening via window update)
-  if (HasFlag(flags, Flags::SYN)) {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    if (state_ == StreamState::Init) {
-      state_ = StreamState::SYNReceived;
-      needs_ack_.store(true);
-    }
-  }
+Error Stream::HandleData(const uint8_t *data, size_t len, Flags flags)
+{
+	// Handle SYN flag (stream opening)
+	if (HasFlag(flags, Flags::SYN)) {
+		std::lock_guard<std::mutex> lock(state_mtx_);
+		if (state_ == StreamState::Init) {
+			state_ = StreamState::SYNReceived;
+			needs_ack_.store(true);
+		}
+	}
 
-  // Handle ACK flag
-  if (HasFlag(flags, Flags::ACK)) {
-    NotifyEstablished();
-  }
+	// Handle ACK flag
+	if (HasFlag(flags, Flags::ACK)) {
+		NotifyEstablished();
+	}
 
-  // Handle RST flag
-  if (HasFlag(flags, Flags::RST)) {
-    HandleReset();
-    return Error::OK;
-  }
+	// Handle data payload
+	if (len > 0) {
+		// Check window
+		uint32_t current_window = recv_window_.load();
+		if (len > current_window) {
+			return Error::WindowExceeded;
+		}
+		recv_window_.fetch_sub(static_cast<uint32_t>(len));
 
-  // Update send window.
-  // Skip delta for SYN frames: the stream constructor already sets
-  // initial_window_size as the send_window. Adding the SYN delta would
-  // double-count, causing WindowExceeded on the peer.
-  if (delta > 0 && !HasFlag(flags, Flags::SYN)) {
-    std::lock_guard<std::mutex> lock(send_mtx_);
-    send_window_ += delta;
-    send_cv_.notify_all();
-  }
+		// Queue data
+		std::lock_guard<std::mutex> lock(read_mtx_);
+		read_queue_.emplace_back(data, data + len);
+		read_cv_.notify_all();
+	}
 
-  // Handle FIN flag
-  if (HasFlag(flags, Flags::FIN)) {
-    remote_fin_received_.store(true);
+	// Handle FIN flag
+	if (HasFlag(flags, Flags::FIN)) {
+		remote_fin_received_.store(true);
 
-    bool fully_closed = false;
-    {
-      std::lock_guard<std::mutex> lock(state_mtx_);
-      if (state_ == StreamState::Established ||
-          state_ == StreamState::SYNReceived) {
-        state_ = StreamState::RemoteClose;
-      } else if (state_ == StreamState::LocalClose) {
-        state_ = StreamState::Closed;
-        fully_closed = true;
-      }
-    }
+		bool fully_closed = false;
+		{
+			std::lock_guard<std::mutex> lock(state_mtx_);
+			if (state_ == StreamState::Established ||
+			    state_ == StreamState::SYNReceived) {
+				state_ = StreamState::RemoteClose;
+			} else if (state_ == StreamState::LocalClose) {
+				state_ = StreamState::Closed;
+				fully_closed = true;
+			}
+		}
 
-    read_cv_.notify_all();
+		read_cv_.notify_all();
 
-    if (fully_closed) {
-      session_->RemoveStream(id_);
-    }
-  }
+		if (fully_closed) {
+			session_->RemoveStream(id_);
+		}
+	}
 
-  return Error::OK;
+	return Error::OK;
 }
 
-void Stream::HandleReset() {
-  reset_.store(true);
+Error Stream::HandleWindowUpdate(uint32_t delta, Flags flags)
+{
+	// Handle SYN flag (stream opening via window update)
+	if (HasFlag(flags, Flags::SYN)) {
+		std::lock_guard<std::mutex> lock(state_mtx_);
+		if (state_ == StreamState::Init) {
+			state_ = StreamState::SYNReceived;
+			needs_ack_.store(true);
+		}
+	}
 
-  {
-    std::lock_guard<std::mutex> lock(state_mtx_);
-    state_ = StreamState::Reset;
-  }
+	// Handle ACK flag
+	if (HasFlag(flags, Flags::ACK)) {
+		NotifyEstablished();
+	}
 
-  read_cv_.notify_all();
-  send_cv_.notify_all();
-  session_->RemoveStream(id_);
+	// Handle RST flag
+	if (HasFlag(flags, Flags::RST)) {
+		HandleReset();
+		return Error::OK;
+	}
+
+	// Update send window.
+	// Skip delta for SYN frames: the stream constructor already sets
+	// initial_window_size as the send_window. Adding the SYN delta would
+	// double-count, causing WindowExceeded on the peer.
+	if (delta > 0 && !HasFlag(flags, Flags::SYN)) {
+		std::lock_guard<std::mutex> lock(send_mtx_);
+		send_window_ += delta;
+		send_cv_.notify_all();
+	}
+
+	// Handle FIN flag
+	if (HasFlag(flags, Flags::FIN)) {
+		remote_fin_received_.store(true);
+
+		bool fully_closed = false;
+		{
+			std::lock_guard<std::mutex> lock(state_mtx_);
+			if (state_ == StreamState::Established ||
+			    state_ == StreamState::SYNReceived) {
+				state_ = StreamState::RemoteClose;
+			} else if (state_ == StreamState::LocalClose) {
+				state_ = StreamState::Closed;
+				fully_closed = true;
+			}
+		}
+
+		read_cv_.notify_all();
+
+		if (fully_closed) {
+			session_->RemoveStream(id_);
+		}
+	}
+
+	return Error::OK;
 }
 
-void Stream::NotifyEstablished() {
-  std::lock_guard<std::mutex> lock(state_mtx_);
-  if (state_ == StreamState::SYNSent || state_ == StreamState::SYNReceived) {
-    state_ = StreamState::Established;
-  }
+void Stream::HandleReset()
+{
+	reset_.store(true);
+
+	{
+		std::lock_guard<std::mutex> lock(state_mtx_);
+		state_ = StreamState::Reset;
+	}
+
+	read_cv_.notify_all();
+	send_cv_.notify_all();
+	session_->RemoveStream(id_);
 }
 
-void Stream::NotifySessionClosed() {
-  session_closed_.store(true);
-  read_cv_.notify_all();
-  send_cv_.notify_all();
+void Stream::NotifyEstablished()
+{
+	std::lock_guard<std::mutex> lock(state_mtx_);
+	if (state_ == StreamState::SYNSent ||
+	    state_ == StreamState::SYNReceived) {
+		state_ = StreamState::Established;
+	}
 }
 
-Error Stream::MaybeSendWindowUpdate() {
-  // Send window update when we've consumed more than half the initial window
-  std::lock_guard<std::mutex> lock(recv_mtx_);
-  if (bytes_consumed_ >= initial_recv_window_ / 2) {
-    uint32_t delta = bytes_consumed_;
-    bytes_consumed_ = 0;
-    recv_window_.fetch_add(delta);
-    return session_->SendWindowUpdate(id_, delta, Flags::None);
-  }
-  return Error::OK;
+void Stream::NotifySessionClosed()
+{
+	session_closed_.store(true);
+	read_cv_.notify_all();
+	send_cv_.notify_all();
+}
+
+Error Stream::MaybeSendWindowUpdate()
+{
+	// Send window update when we've consumed more than half the initial
+	// window
+	std::lock_guard<std::mutex> lock(recv_mtx_);
+	if (bytes_consumed_ >= initial_recv_window_ / 2) {
+		uint32_t delta = bytes_consumed_;
+		bytes_consumed_ = 0;
+		recv_window_.fetch_add(delta);
+		return session_->SendWindowUpdate(id_, delta, Flags::None);
+	}
+	return Error::OK;
 }
 
 } // namespace yamux
